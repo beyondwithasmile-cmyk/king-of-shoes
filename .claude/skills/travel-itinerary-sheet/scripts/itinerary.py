@@ -22,6 +22,9 @@ from googleapiclient.discovery import build
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SA_FILE = os.environ.get("GOOGLE_SA_FILE", "/tmp/sa.json")
 DASH = "－"          # 全角ハイフンマイナス。ASCII の '-' ではない
+WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
+CYAN = {"red": 0.0, "green": 1.0, "blue": 1.0}    # フライト行の時刻セル
+GREEN = {"red": 0.0, "green": 1.0, "blue": 0.0}   # 食事行の予定セル
 COLS_PER_DAY = 6
 STRIDE = COLS_PER_DAY + 1  # 6列 + 空列1
 
@@ -98,7 +101,7 @@ def build_departure_rows(dep):
         [0, wake, dep.get("wake_label", "起床・準備・自宅出発")],
         [0, transit, dep["transit_label"]],
         [0, lounge, lounge_label],
-        [30, flight_min, dep["flight_label"]],           # 調整30分 = 搭乗
+        [30, flight_min, dep["flight_label"], "flight"],  # 調整30分 = 搭乗
     ]
     detail = {
         "起床": min_to_hhmm(wake_start),
@@ -137,13 +140,18 @@ def build_grid(spec):
 
     n_rows = max(len(r) for _, r, _ in prepared)
     grid = [["" for _ in range(n_cols)] for _ in range(n_rows)]
+    marks = []
 
     for i, (day, rows, start) in enumerate(prepared):
         base = i * STRIDE
         adj, dur, st, dash, en = (col_letter(base + k) for k in range(5))
         plan_i = base + 5
-        for n, (a, p, text) in enumerate(rows):
+        for n, row in enumerate(rows):
+            a, p, text = row[0], row[1], row[2]
+            tag = row[3] if len(row) > 3 else None
             r = 2 + n                       # 実際のシート行番号
+            if tag:
+                marks.append({"tag": tag, "row": r, "base": base})
             g = grid[n]
             g[base + 0] = a
             g[base + 1] = p
@@ -159,6 +167,7 @@ def build_grid(spec):
         "day_rows": [len(r) for _, r, _ in prepared],
         "day_starts": [s for _, _, s in prepared],
         "details": details,
+        "marks": marks,
     }
     return grid, meta
 
@@ -174,9 +183,9 @@ def simulate(spec):
             rows = lead_rows + rows
         t = hhmm_to_min(start)
         end = (t + int(rows[0][1])) % 1440
-        for a, p, _ in rows[1:]:
-            t = (end + int(a)) % 1440
-            end = (t + int(p)) % 1440
+        for row in rows[1:]:
+            t = (end + int(row[0])) % 1440
+            end = (t + int(row[1])) % 1440
         out.append({"day": i + 1, "rows": len(rows), "start": start,
                     "last_end": min_to_hhmm(end),
                     "last_end_cell": f"{col_letter(i * STRIDE + 4)}{1 + len(rows)}"})
@@ -260,14 +269,41 @@ def cmd_apply(spec, args):
         "valueInputOption": "USER_ENTERED", "data": data}).execute()
     print(f"  ヘッダー: {res['totalUpdatedCells']} セル（J1/Q1 は未変更）")
 
-    # 4) 2行目以降の網掛けを解除（1行目の色は残す）
+    # 4) 書式。2行目以降の網掛けを白に戻してからフライトと食事だけ塗り直す。
+    #    1行目のヘッダー色は残す。下線はシート全体から削除する。
+    def cell_range(row, c0, c1):
+        return {"sheetId": sheet_id, "startRowIndex": row - 1, "endRowIndex": row,
+                "startColumnIndex": c0, "endColumnIndex": c1}
+
+    reqs = []
     if spec.get("clear_shading", True):
-        svc.batchUpdate(spreadsheetId=sid, body={"requests": [{"repeatCell": {
+        reqs.append({"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": total_rows,
                       "startColumnIndex": 0, "endColumnIndex": total_cols},
-            "cell": {"userEnteredFormat": {"backgroundColor": {"red": 1, "green": 1, "blue": 1}}},
-            "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle"}}]}).execute()
-        print(f"  網掛け解除: 2〜{total_rows}行")
+            "cell": {"userEnteredFormat": {"backgroundColor": WHITE}},
+            "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle"}})
+    reqs.append({"repeatCell": {      # 下線を削除。太字・フォント等はそのまま
+        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": total_rows,
+                  "startColumnIndex": 0, "endColumnIndex": total_cols},
+        "cell": {"userEnteredFormat": {"textFormat": {"underline": False}}},
+        "fields": "userEnteredFormat.textFormat.underline"}})
+
+    n_flight = n_meal = 0
+    for m in meta["marks"]:
+        if m["tag"] == "flight":      # 開始・－・終了 の3セルだけ水色
+            rng, color = cell_range(m["row"], m["base"] + 2, m["base"] + 5), CYAN
+            n_flight += 1
+        elif m["tag"] == "meal":      # 予定セルだけ黄緑
+            rng, color = cell_range(m["row"], m["base"] + 5, m["base"] + 6), GREEN
+            n_meal += 1
+        else:
+            raise ValueError(f"未知のタグ: {m['tag']}")
+        reqs.append({"repeatCell": {
+            "range": rng, "cell": {"userEnteredFormat": {"backgroundColor": color}},
+            "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle"}})
+
+    svc.batchUpdate(spreadsheetId=sid, body={"requests": reqs}).execute()
+    print(f"  書式: 網掛けリセット+下線削除、フライト{n_flight}行を水色、食事{n_meal}行を黄緑")
 
 
 def cmd_verify(spec, args):
