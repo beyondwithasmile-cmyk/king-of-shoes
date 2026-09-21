@@ -1,0 +1,39 @@
+{
+  "_comment": "書式の見本。flight_* と transit_minutes は必ず予約メールと Yahoo!乗換案内から取る。",
+  "spreadsheet_id": "1aSnCEPtY3jEJi46jJ4pFUcYTAS-0zkrE9qRVv3Scjrw",
+  "tab": "サンプル2601",
+  "date": "2026/1/10",
+  "clear_below": 200,
+  "clear_shading": true,
+  "days": [
+    {
+      "title": "1日目（移動・現地観光）",
+      "_comment": "departure があるとき start は書かない。起床時刻は出発時刻から逆算される。",
+      "departure": {
+        "international": false,
+        "wake_minutes": 60,
+        "wake_label": "起床・準備・自宅出発",
+        "transit_minutes": 47,
+        "transit_label": "自宅→羽田空港 第2ターミナル（電車47分）",
+        "flight_label": "フライト 羽田→伊丹",
+        "flight_dep": "0800",
+        "flight_arr": "0910"
+      },
+      "rows": [
+        [0, 30, "伊丹空港 到着・レンタカー受取"],
+        [10, 45, "伊丹空港→大阪市内（車45分）"]
+      ]
+    },
+    {
+      "title": "2日目（帰路）",
+      "start": "0700",
+      "expect_last_end": "1100",
+      "rows": [
+        [0, 60, "起床・準備・朝食"],
+        [0, 30, "チェックアウト"],
+        [10, 50, "ホテル→伊丹空港（車50分）"],
+        [0, 90, "搭乗手続き・保安検査・昼食"]
+      ]
+    }
+  ]
+}
