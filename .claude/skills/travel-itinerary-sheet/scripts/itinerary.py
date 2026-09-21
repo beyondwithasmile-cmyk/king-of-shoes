@@ -77,10 +77,16 @@ def build_departure_rows(dep):
     if flight_min == 0:
         raise ValueError("flight_dep と flight_arr が同一です")
 
-    terminal_arrival = (dep_m - lead) % 1440
-    lounge = lead - 30                                   # 出発30分前まで滞在
+    scheduled = (dep_m - lead) % 1440                    # ルール上の目標到着
+    # 始発が間に合わない等でルール通りに着けない場合は実到着時刻を明示する
+    terminal_arrival = hhmm_to_min(dep["terminal_arrival"]) if dep.get("terminal_arrival") else scheduled
+    lounge = (dep_m - 30 - terminal_arrival) % 1440      # 出発30分前まで滞在
+    if not 0 < lounge <= lead:
+        raise ValueError(f"ターミナル到着 {min_to_hhmm(terminal_arrival)} が "
+                         f"出発 {dep['flight_dep']} の30分前を過ぎています")
     home_dep = (terminal_arrival - transit) % 1440
     wake_start = (home_dep - wake) % 1440
+    shortfall = (terminal_arrival - scheduled) % 1440
 
     kind = "国際線" if dep.get("international") else "国内線"
     d = dep["flight_dep"]
@@ -98,7 +104,8 @@ def build_departure_rows(dep):
         "起床": min_to_hhmm(wake_start),
         "自宅出発": min_to_hhmm(home_dep),
         "ターミナル到着": min_to_hhmm(terminal_arrival),
-        f"{kind}リード": f"{lead}分前",
+        f"{kind}リード": (f"{lead}分前" if not shortfall
+                       else f"{lead}分前に対し{shortfall}分遅い(実{(dep_m - terminal_arrival) % 1440}分前)"),
         "ラウンジ滞在": f"{lounge}分",
         "搭乗(調整)": "30分",
         "出発": dep["flight_dep"],

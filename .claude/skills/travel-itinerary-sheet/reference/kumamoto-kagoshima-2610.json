@@ -80,12 +80,13 @@
         "international": false,
         "wake_minutes": 60,
         "wake_label": "起床・準備・自宅出発",
-        "transit_minutes": 25,
-        "transit_label": "自宅→羽田空港 第2ターミナル（タクシー25分）※始発電車は05:35着で2時間前に間に合わない",
+        "transit_minutes": 61,
+        "transit_label": "自宅→羽田空港第1・第2ターミナル ※徒歩16分→小田栄0459発(JR南武線)→八丁畷0518発(京急本線)→京急蒲田0536発(京急空港線)→0544着 ¥482",
         "flight_label": "NH2411 羽田→熊本（ソラシドエア運航）07:15発09:05着",
-        "lounge_label": "チェックイン・保安検査・ラウンジ ※07:15発・国内線2時間前着",
+        "lounge_label": "チェックイン・保安検査・ラウンジ ※07:15発の30分前まで（手荷物預けは羽田発の30分前まで）",
         "flight_dep": "0715",
-        "flight_arr": "0905"
+        "flight_arr": "0905",
+        "terminal_arrival": "0544"
       }
     },
     {
