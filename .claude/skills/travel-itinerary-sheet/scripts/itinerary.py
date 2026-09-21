@@ -263,6 +263,7 @@ def cmd_apply(spec, args):
     total_cols = props["gridProperties"]["columnCount"]
     last_col = meta["last_col"]
     end_row = meta["n_rows"] + 1
+    clear_to = int(spec.get("clear_below", 200))
 
     # 1) 本体を書き込む
     res = svc.values().batchUpdate(spreadsheetId=sid, body={
@@ -271,7 +272,6 @@ def cmd_apply(spec, args):
     print(f"  書き込み: {res['totalUpdatedCells']} セル")
 
     # 2) その下をクリア（行削除はしない）
-    clear_to = int(spec.get("clear_below", 200))
     if clear_to > end_row:
         rng = f"'{tab}'!A{end_row + 1}:{last_col}{clear_to}"
         svc.values().clear(spreadsheetId=sid, range=rng, body={}).execute()
@@ -306,6 +306,20 @@ def cmd_apply(spec, args):
         "cell": {"userEnteredFormat": {"textFormat": {"underline": False}}},
         "fields": "userEnteredFormat.textFormat.underline"}})
 
+    # 揃えを明示する。既定のままだと数値=右・文字列=左で列がガタつく。
+    # 調整/所要は数値、開始/終了は TEXT() の戻り値なので放置すると必ずズレる。
+    # 行を足しても崩れないよう、クリア範囲の末尾まで一括で指定する。
+    align_to = max(end_row, clear_to)
+    for i in range(len(spec["days"])):
+        base = i * STRIDE
+        for c0, c1, align in ((base, base + 5, "CENTER"),        # 調整・所要・開始・－・終了
+                              (base + 5, base + 6, "LEFT")):     # 予定
+            reqs.append({"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": align_to,
+                          "startColumnIndex": c0, "endColumnIndex": c1},
+                "cell": {"userEnteredFormat": {"horizontalAlignment": align}},
+                "fields": "userEnteredFormat.horizontalAlignment"}})
+
     n_flight = n_meal = 0
     for m in meta["marks"]:
         if m["tag"] == "flight":      # 開始・－・終了 の3セルだけ水色
@@ -321,7 +335,8 @@ def cmd_apply(spec, args):
             "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle"}})
 
     svc.batchUpdate(spreadsheetId=sid, body={"requests": reqs}).execute()
-    print(f"  書式: 網掛けリセット+下線削除、フライト{n_flight}行を水色、食事{n_meal}行を黄緑")
+    print(f"  書式: 網掛けリセット+下線削除+揃え統一（数値列=中央/予定列=左、2〜{align_to}行）、"
+          f"フライト{n_flight}行を水色、食事{n_meal}行を黄緑")
 
 
 def cmd_verify(spec, args):
