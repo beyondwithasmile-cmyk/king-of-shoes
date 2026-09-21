@@ -65,14 +65,14 @@ def f_end(start_col, dur_col, row):
 
 # ---------- 1日目の出発ブロック ----------
 
-def build_departure_rows(dep):
-    """予約メール由来の便情報から先頭4行を生成し、逆算した起床時刻を返す。
+def build_airport_block(dep):
+    """空港での「チェックイン/ラウンジ行」と「フライト行」を作る。
 
-    返り値: (rows, literal_start_hhmm, detail)
+    往路の出発ブロックと復路の搭乗ブロックで共通。フライト行は
+    調整30分（搭乗）＋所要=飛行時間 なので、終了が現地到着時刻に一致する。
     """
-    lead = 180 if dep.get("international") else 120     # ターミナル到着は出発の何分前か
-    wake = int(dep.get("wake_minutes", 60))
-    transit = int(dep["transit_minutes"])
+    kind = "国際線" if dep.get("international") else "国内線"
+    lead = int(dep.get("lead_minutes", 180 if dep.get("international") else 120))
 
     dep_m = hhmm_to_min(dep["flight_dep"])
     arr_m = hhmm_to_min(dep["flight_arr"])
@@ -87,34 +87,46 @@ def build_departure_rows(dep):
     if not 0 < lounge <= lead:
         raise ValueError(f"ターミナル到着 {min_to_hhmm(terminal_arrival)} が "
                          f"出発 {dep['flight_dep']} の30分前を過ぎています")
-    home_dep = (terminal_arrival - transit) % 1440
-    wake_start = (home_dep - wake) % 1440
     shortfall = (terminal_arrival - scheduled) % 1440
 
-    kind = "国際線" if dep.get("international") else "国内線"
     d = dep["flight_dep"]
-    lounge_label = dep.get(
-        "lounge_label",
-        f"チェックイン・保安検査・ラウンジ ※{d[:2]}:{d[2:]}発・{kind}{lead // 60}時間前着")
+    rows = [
+        [0, lounge, dep.get("lounge_label",
+                            f"チェックイン・保安検査・ラウンジ ※{d[:2]}:{d[2:]}発・{kind}{lead // 60}時間前着")],
+        [30, flight_min, dep["flight_label"], "flight"],  # 調整30分 = 搭乗
+    ]
+    info = {
+        "terminal_arrival": terminal_arrival,
+        "detail": {
+            "ターミナル到着": min_to_hhmm(terminal_arrival),
+            f"{kind}リード": (f"{lead}分前" if not shortfall
+                           else f"{lead}分前に対し{shortfall}分遅い(実{(dep_m - terminal_arrival) % 1440}分前)"),
+            "ラウンジ滞在": f"{lounge}分",
+            "搭乗(調整)": "30分",
+            "出発": dep["flight_dep"],
+            "飛行時間": f"{flight_min}分",
+            "到着": dep["flight_arr"],
+        },
+    }
+    return rows, info
+
+
+def build_departure_rows(dep):
+    """1日目の先頭。起床と自宅→ターミナルの移動を空港ブロックの前に足す。
+
+    返り値: (rows, literal_start_hhmm, detail)
+    """
+    rows, info = build_airport_block(dep)
+    wake = int(dep.get("wake_minutes", 60))
+    transit = int(dep["transit_minutes"])
+    home_dep = (info["terminal_arrival"] - transit) % 1440
+    wake_start = (home_dep - wake) % 1440
 
     rows = [
         [0, wake, dep.get("wake_label", "起床・準備・自宅出発")],
         [0, transit, dep["transit_label"]],
-        [0, lounge, lounge_label],
-        [30, flight_min, dep["flight_label"], "flight"],  # 調整30分 = 搭乗
-    ]
-    detail = {
-        "起床": min_to_hhmm(wake_start),
-        "自宅出発": min_to_hhmm(home_dep),
-        "ターミナル到着": min_to_hhmm(terminal_arrival),
-        f"{kind}リード": (f"{lead}分前" if not shortfall
-                       else f"{lead}分前に対し{shortfall}分遅い(実{(dep_m - terminal_arrival) % 1440}分前)"),
-        "ラウンジ滞在": f"{lounge}分",
-        "搭乗(調整)": "30分",
-        "出発": dep["flight_dep"],
-        "飛行時間": f"{flight_min}分",
-        "到着": dep["flight_arr"],
-    }
+    ] + rows
+    detail = {"起床": min_to_hhmm(wake_start), "自宅出発": min_to_hhmm(home_dep), **info["detail"]}
     return rows, min_to_hhmm(wake_start), detail
 
 
@@ -134,6 +146,10 @@ def build_grid(spec):
             lead_rows, start, detail = build_departure_rows(day["departure"])
             rows = lead_rows + rows
             details.append((i, detail))
+        if day.get("boarding"):
+            tail_rows, info = build_airport_block(day["boarding"])
+            rows = rows + tail_rows
+            details.append((i, info["detail"]))
         if not start:
             raise ValueError(f"{i + 1}日目に start も departure もありません")
         prepared.append((day, rows, start))
@@ -181,6 +197,8 @@ def simulate(spec):
         if day.get("departure"):
             lead_rows, start, _ = build_departure_rows(day["departure"])
             rows = lead_rows + rows
+        if day.get("boarding"):
+            rows = rows + build_airport_block(day["boarding"])[0]
         t = hhmm_to_min(start)
         end = (t + int(rows[0][1])) % 1440
         for row in rows[1:]:
@@ -230,7 +248,7 @@ def cmd_apply(spec, args):
 
     print(f"  範囲 A2:{meta['last_col']}{meta['n_rows'] + 1}  ({meta['n_rows']}行 x {meta['n_cols']}列)")
     for i, detail in meta["details"]:
-        print(f"  {i + 1}日目 出発ブロック逆算: " + " / ".join(f"{k}={v}" for k, v in detail.items()))
+        print(f"  {i + 1}日目 空港ブロック: " + " / ".join(f"{k}={v}" for k, v in detail.items()))
     for s in sim:
         print(f"  {s['day']}日目: {s['rows']}行 開始{s['start']} → {s['last_end_cell']}={s['last_end']}")
     if args.dry_run:
