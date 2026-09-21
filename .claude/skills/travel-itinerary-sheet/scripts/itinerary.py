@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import sys
+from urllib.parse import quote
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -25,6 +26,8 @@ DASH = "－"          # 全角ハイフンマイナス。ASCII の '-' ではな
 WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
 CYAN = {"red": 0.0, "green": 1.0, "blue": 1.0}    # フライト行の時刻セル
 GREEN = {"red": 0.0, "green": 1.0, "blue": 0.0}   # 食事行の予定セル
+LINK_COLOR = {"red": 0.05, "green": 0.33, "blue": 0.78}
+MAPS_SEARCH = "https://www.google.com/maps/search/?api=1&query="
 COLS_PER_DAY = 6
 STRIDE = COLS_PER_DAY + 1  # 6列 + 空列1
 
@@ -49,6 +52,30 @@ def col_letter(idx):
         idx, r = divmod(idx - 1, 26)
         out = chr(65 + r) + out
     return out
+
+
+def maps_uri(query):
+    return MAPS_SEARCH + quote(query)
+
+
+def link_runs(text, spec):
+    """予定テキストの一部だけを Google マップへのリンクにする textFormatRuns を作る。
+
+    spec は "リンクにする部分文字列" か ["部分文字列", "検索クエリ"]。
+    部分文字列が本文に無ければ黙って流さずエラーにする（リンク位置のズレは気付けないため）。
+    """
+    sub, query = (spec, spec) if isinstance(spec, str) else (spec[0], spec[1])
+    i = text.find(sub)
+    if i < 0:
+        raise ValueError(f"リンク対象 {sub!r} が予定テキストに見つかりません: {text!r}")
+    runs = []
+    if i > 0:
+        runs.append({"startIndex": 0, "format": {}})
+    runs.append({"startIndex": i, "format": {"link": {"uri": maps_uri(query)},
+                                             "underline": True, "foregroundColor": LINK_COLOR}})
+    if i + len(sub) < len(text):
+        runs.append({"startIndex": i + len(sub), "format": {}})
+    return runs
 
 
 # ---------- 数式 ----------
@@ -124,7 +151,7 @@ def build_departure_rows(dep):
 
     rows = [
         [0, wake, dep.get("wake_label", "起床・準備・自宅出発")],
-        [0, transit, dep["transit_label"]],
+        [0, transit, dep["transit_label"], None, dep.get("transit_map")],
     ] + rows
     detail = {"起床": min_to_hhmm(wake_start), "自宅出発": min_to_hhmm(home_dep), **info["detail"]}
     return rows, min_to_hhmm(wake_start), detail
@@ -156,7 +183,7 @@ def build_grid(spec):
 
     n_rows = max(len(r) for _, r, _ in prepared)
     grid = [["" for _ in range(n_cols)] for _ in range(n_rows)]
-    marks = []
+    marks, links = [], []
 
     for i, (day, rows, start) in enumerate(prepared):
         base = i * STRIDE
@@ -168,6 +195,8 @@ def build_grid(spec):
             r = 2 + n                       # 実際のシート行番号
             if tag:
                 marks.append({"tag": tag, "row": r, "base": base})
+            if len(row) > 4 and row[4]:
+                links.append({"row": r, "col": base + 5, "runs": link_runs(text, row[4])})
             g = grid[n]
             g[base + 0] = a
             g[base + 1] = p
@@ -184,6 +213,7 @@ def build_grid(spec):
         "day_starts": [s for _, _, s in prepared],
         "details": details,
         "marks": marks,
+        "links": links,
     }
     return grid, meta
 
@@ -334,9 +364,19 @@ def cmd_apply(spec, args):
             "range": rng, "cell": {"userEnteredFormat": {"backgroundColor": color}},
             "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle"}})
 
+    # 予定セルの一部を Google マップへリンクさせる。値の書き込みで textFormatRuns は
+    # 消えるので、必ず値を書いたあと・この batchUpdate の最後に置く。
+    for lk in meta["links"]:
+        reqs.append({"updateCells": {
+            "range": {"sheetId": sheet_id, "startRowIndex": lk["row"] - 1, "endRowIndex": lk["row"],
+                      "startColumnIndex": lk["col"], "endColumnIndex": lk["col"] + 1},
+            "rows": [{"values": [{"textFormatRuns": lk["runs"]}]}],
+            "fields": "textFormatRuns"}})
+
     svc.batchUpdate(spreadsheetId=sid, body={"requests": reqs}).execute()
     print(f"  書式: 網掛けリセット+下線削除+揃え統一（数値列=中央/予定列=左、2〜{align_to}行）、"
-          f"フライト{n_flight}行を水色、食事{n_meal}行を黄緑")
+          f"フライト{n_flight}行を水色、食事{n_meal}行を黄緑、"
+          f"地図リンク{len(meta['links'])}件")
 
 
 def cmd_verify(spec, args):
