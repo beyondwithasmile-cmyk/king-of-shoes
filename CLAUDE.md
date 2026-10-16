@@ -24,3 +24,9 @@
 ユーザーの予定を調べて報告することは求められていない。
 
 対象が確定したら `.claude/skills/travel-itinerary-sheet/SKILL.md` の手順に従う。
+
+## クラウドで動いているとき
+
+アプリの「新規」は、PCのリモートコントロールの接続先が消えていると、黙ってクラウドで作られる。
+クラウドで始まったチャットには、SessionStart フック（`.claude/hooks/cloud-session-notice.sh`）が
+接続状態を伝える。最初の返答でそれをユーザーに知らせる。直し方は `docs/remote-control.md`。
